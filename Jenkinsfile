@@ -1,32 +1,43 @@
-# Use a base image with Java and Maven installed
-FROM maven:3.8.4-openjdk-11 AS build
+pipeline {
+    agent any
+    
+    stages {
+        stage('Build') {
+            steps {
+                script {
+                    def mvnHome = tool 'Maven'
+                    sh "${mvnHome}/bin/mvn clean package -DskipTests"
+                }
+            }
+        }
+        stage('Docker Build and Push') {
+            steps {
+                script {
+                    docker.withRegistry('https://registry.hub.docker.com', 'docker-hub-credentials') {
+                        def customImage = docker.build("your-docker-hub-username/hello-world-app:${env.BUILD_NUMBER}")
+                        customImage.push()
+                        customImage.push('latest')
+                    }
+                }
+            }
+        }
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    def kubeConfig = credentials('kube-config')
+                    kubeConfig.withCredentials([file(credentialsId: 'kube-config', variable: 'KUBECONFIG')]) {
+                        sh "kubectl apply -f deployment.yaml"
+                        sh "kubectl apply -f service.yaml"
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo 'Pipeline succeeded! Application deployed.'
+        }
+    }
+}
 
-# Set working directory
-WORKDIR /app
-
-# Copy Maven dependencies file
-COPY pom.xml .
-
-# Download dependencies if any changes
-RUN mvn dependency:go-offline -B
-
-# Copy source code
-COPY src ./src
-
-# Build the application
-RUN mvn package -DskipTests
-
-# Use a lightweight Java runtime
-FROM openjdk:11-jre-slim
-
-# Set working directory
-WORKDIR /app
-
-# Copy built JAR file from the build stage
-COPY --from=build /app/target/*.jar app.jar
-
-# Expose the port
-EXPOSE 8080
-
-# Command to run the application
-CMD ["java", "-jar", "app.jar"]
